@@ -1,11 +1,11 @@
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { SerialPort, ReadlineParser } from "serialport";
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenAI } from "@google/genai";
 
 const PORT = "/dev/ttyACM0"; // WSL path
 const BAUD = 115200;
-const MODEL = "claude-sonnet-5-5";
+const MODEL = "gemini-3.5-flash-lite";
 
 const MOODS = new Set(["HAPPY", "CURIOUS", "SAD", "STARTLED"]);
 const MOOD_PLAY_MS = { HAPPY: 4500, CURIOUS: 1500, SAD: 4000, STARTLED: 700 };
@@ -16,7 +16,7 @@ const SYSTEM =
   "mood tag: [HAPPY], [CURIOUS], [SAD], or [STARTLED].";
 
 // --- Fake mode: used automatically when no API key is set ---
-const FAKE = !process.env.ANTHROPIC_API_KEY;
+const FAKE = !process.env.GEMINI_API_KEY;
 const FAKE_REPLIES = [
   "[HAPPY] Hoo hoo! Nice to meet you!",
   "[CURIOUS] Hmm, what's that?",
@@ -43,29 +43,40 @@ function parseReply(text) {
 }
 
 async function main() {
-  const client = FAKE ? null : new Anthropic(); // only created when a key exists
+  const client = FAKE ? null : new GoogleGenAI({}); // reads GEMINI_API_KEY from the environment, only created when a key exists
   const history = [];
   const rl = readline.createInterface({ input, output });
 
   async function getReply() {
     if (FAKE) {
-      await sleep(800); // pretend to think
+      await sleep(800);
       return FAKE_REPLIES[Math.floor(Math.random() * FAKE_REPLIES.length)];
     }
-    const resp = await client.messages.create({
+    console.log("  [debug] calling Gemini...");
+    const resp = await client.models.generateContent({
       model: MODEL,
-      max_tokens: 200,
-      system: SYSTEM,
-      messages: history.slice(-10),
+      contents: history.slice(-10).map((m) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
+      })),
+      config: {
+        systemInstruction: SYSTEM,
+        maxOutputTokens: 500,
+        abortSignal: AbortSignal.timeout(20000), // give up after 20 seconds
+      },
     });
-    return resp.content[0].text;
+    console.log("  [debug] got response");
+    if (!resp.text) {
+      throw new Error(`Empty reply (finish reason: ${resp.candidates?.[0]?.finishReason})`);
+    }
+    return resp.text;
   }
 
   rl.on("close", () => {
     port.write("IDLE\n", () => port.close(() => process.exit(0)));
   });
 
-  console.log(FAKE ? "No API key found: running in FAKE mode." : "Using Claude.");
+  console.log(FAKE ? "No API key found: running in FAKE mode." : "Using Gemini.");
 
   await sleep(2500); // the board may reset when the port opens
   send("STARTLED");

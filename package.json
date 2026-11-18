@@ -24,6 +24,7 @@
   "homepage": "https://github.com/baughc501/owl-bot#readme",
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",
+    "@google/genai": "^3.4.0",
     "serialport": "^13.0.0",
     "ws": "^8.23.0"
   }
