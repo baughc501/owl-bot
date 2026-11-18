@@ -1,0 +1,90 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Bubo</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 600px; margin: 2rem auto; padding: 0 1rem; }
+  button { font-size: 1.2rem; padding: .6rem 1.2rem; }
+  #status { color: #666; margin: .8rem 0; }
+  #log p { margin: .4rem 0; }
+</style>
+<h1>Bubo 🦉</h1>
+<button id="toggle">Start</button>
+<div id="status">Idle</div>
+<div id="log"></div>
+
+<script>
+const ws = new WebSocket(`ws://${location.host}`);
+const sendMsg = (o) => ws.readyState === 1 && ws.send(JSON.stringify(o));
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const logEl = document.getElementById("log");
+const statusEl = document.getElementById("status");
+const toggleEl = document.getElementById("toggle");
+let running = false;
+
+function log(who, text) {
+  const p = document.createElement("p");
+  p.textContent = `${who}: ${text}`;
+  logEl.prepend(p);
+}
+
+function stop(reason) {
+  running = false;
+  toggleEl.textContent = "Start";
+  statusEl.textContent = reason || "Stopped";
+}
+
+function listen(announce) {
+  if (!running) return;
+  statusEl.textContent = "Listening...";
+  if (announce) sendMsg({ type: "listening" });
+
+  const rec = new SR();
+  rec.lang = "en-US";
+  let gotResult = false;
+
+  rec.onresult = (e) => {
+    gotResult = true;
+    const text = e.results[0][0].transcript;
+    log("You", text);
+    statusEl.textContent = "Thinking...";
+    sendMsg({ type: "user_text", text });
+  };
+  rec.onerror = (e) => {
+    if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+      stop("Microphone permission denied");
+    }
+  };
+  rec.onend = () => {
+    // Silence or timeout: quietly listen again without resetting Bubo's pose
+    if (!gotResult && running) setTimeout(() => listen(false), 300);
+  };
+  rec.start();
+}
+
+ws.onmessage = (e) => {
+  const msg = JSON.parse(e.data);
+
+  if (msg.type === "reply") {
+    log(`Bubo (${msg.mood})`, msg.speech);
+    statusEl.textContent = "Speaking...";
+    const u = new SpeechSynthesisUtterance(msg.speech);
+    u.pitch = 1.4; // owl-ish
+    u.onstart = () => sendMsg({ type: "speaking" });
+    u.onend = () => sendMsg({ type: "spoken" });
+    u.onerror = () => sendMsg({ type: "spoken" }); // never leave the loop stuck
+    speechSynthesis.speak(u);
+  } else if (msg.type === "ready") {
+    listen(true);
+  }
+};
+
+ws.onclose = () => stop("Disconnected (another tab may have taken over)");
+
+toggleEl.onclick = () => {
+  if (!SR) return alert("Speech recognition needs Chrome or Edge.");
+  if (running) return stop("Stopped");
+  running = true;
+  toggleEl.textContent = "Stop";
+  listen(true);
+};
+</script>
